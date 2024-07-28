@@ -5,6 +5,7 @@
     "noplaylist",
     "outtmpl",
     "pyqt",
-    "savedir"
+    "savedir",
+    "ytdlp"
   ]
 }

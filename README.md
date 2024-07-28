@@ -48,13 +48,17 @@ A PyQt5 application for downloading videos and audio from YouTube using `yt-dlp`
 
 2. Enter a YouTube URL in the provided text field.
 
-3. Select the desired format from the dropdown list.
+3. Click the "Get" button to fetch the available formats
 
-4. Click the "Download" button to start the download process.
+4. Select the desired format from the dropdown list.
 
-5. Use the "Clear" button to clear the input fields and reset the UI.
+5. If the URL contains a playlist and you want to download it, check the "Playlist" button.
 
-6. Click the folder button to select the download directory.
+6. Click the "Download" button to start the download process.
+
+7. Click the folder button to select the download directory.
+
+8. Use the "Clear" button to clear the input fields and reset the UI.
 
 ## Code Overview
 
