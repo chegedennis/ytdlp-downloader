@@ -23,7 +23,7 @@ A PyQt5 application for downloading videos and audio from YouTube using `yt-dlp`
 
    ```bash
    git clone https://github.com/chegedennis/ytdlp-downloader.git
-   cd your-repo-name
+   cd ytdlp-downloader
    ```
 
 2. Install the required dependencies:
