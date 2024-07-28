@@ -1,25 +1,28 @@
 """
 main.py
--------
 
-A PyQt5 application for downloading videos and audio from YouTube using `yt-dlp`.
+A PyQt5 application for downloading YouTube videos and audio using yt-dlp. This application allows users to select video formats, track download progress, and manage completed downloads.
 
 Modules:
-    os: Provides a way of using operating system-dependent functionality.
-    sys: Provides access to some variables used or maintained by the interpreter.
-    time: Provides various time-related functions.
-    yt_dlp: A command-line program to download videos from YouTube.com and a few more sites.
-    subprocess: Allows you to spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
-    re: Provides regular expression matching operations.
-    datetime: Supplies classes for manipulating dates and times.
+    os
+    sys
+    time
+    re
+    subprocess
+    yt_dlp
+    datetime.timedelta
+    PyQt5.QtCore (QTimer, QThread, pyqtSignal, QObject, QUrl, Qt)
+    PyQt5.QtWidgets (QApplication, QMainWindow, QMessageBox, QCheckBox, QLabel, QPushButton, QFileDialog, QTableWidgetItem)
+    PyQt5.uic (loadUi)
+    db_functions (create_database_or_database_table)
 
 Classes:
     DownloadWorker
     MainWindow
 
 Functions:
-    create_db_dir()
-    parse_formats(output)
+    create_db_dir
+    parse_formats
 """
 
 import os
@@ -48,23 +51,23 @@ from db_functions import create_database_or_database_table
 
 def create_db_dir():
     """
-    Create a directory named '.dbs' if it doesn't exist.
+    Create a directory for storing database files if it doesn't exist.
     """
     os.makedirs(".dbs", exist_ok=True)
 
 
 class DownloadWorker(QThread):
     """
-    A worker thread to handle downloading videos in the background.
+    Worker thread to handle video/audio downloads using yt-dlp.
 
-    Signals:
-        progress (dict): Emitted with progress updates.
-        finished (): Emitted when the download is finished.
-        error (str): Emitted when an error occurs.
+    Attributes:
+        progress (pyqtSignal): Signal emitted to indicate download progress.
+        finished (pyqtSignal): Signal emitted when the download is finished.
+        error (pyqtSignal): Signal emitted when an error occurs during download.
 
     Methods:
-        __init__(url, ydl_opts): Initializes the worker with a URL and yt-dlp options.
-        run(): Executes the download process.
+        __init__(self, url, ydl_opts): Initializes the DownloadWorker with a URL and yt-dlp options.
+        run(self): Executes the download process.
     """
 
     progress = pyqtSignal(dict)
@@ -73,11 +76,11 @@ class DownloadWorker(QThread):
 
     def __init__(self, url, ydl_opts):
         """
-        Initialize the worker thread with the given URL and yt-dlp options.
+        Initializes the DownloadWorker with a URL and yt-dlp options.
 
         Args:
-            url (str): The URL of the video to download.
-            ydl_opts (dict): The yt-dlp options for downloading the video.
+            url (str): The URL of the video/audio to download.
+            ydl_opts (dict): The options for yt-dlp.
         """
         super().__init__()
         self.url = url
@@ -85,7 +88,7 @@ class DownloadWorker(QThread):
 
     def run(self):
         """
-        Run the download process and emit signals for progress, completion, and errors.
+        Executes the download process using yt-dlp.
         """
         try:
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
@@ -98,13 +101,13 @@ class DownloadWorker(QThread):
 
 def parse_formats(output):
     """
-    Parse the format options from the yt-dlp output.
+    Parses the output of yt-dlp to extract available formats.
 
     Args:
-        output (str): The output string from yt-dlp.
+        output (str): The output from yt-dlp containing format information.
 
     Returns:
-        dict: A dictionary with audio and video format options.
+        dict: A dictionary with available audio and video formats.
     """
     lines = output.splitlines()
     formats = {"audio": None, "video": []}
@@ -142,27 +145,39 @@ def parse_formats(output):
 
 class MainWindow(QMainWindow):
     """
-    The main window for the PyQt5 application.
+    Main window of the application.
+
+    Attributes:
+        selectionType (str): The type of selection (audio or video format).
+        status (str): The current status of the download.
+        eta (int): The estimated time remaining for the download.
+        transfer_rate (float): The current transfer rate of the download.
+        downloaded_bytes (int): The number of bytes downloaded.
+        file_size (int): The total size of the file being downloaded.
+        url (str): The URL of the video/audio to download.
+        download_data (dict): Dictionary to store download progress data.
+        download_thread (DownloadWorker): The worker thread handling the download.
+        download_folder (str): The folder where the downloaded files will be saved.
 
     Methods:
-        __init__(): Initializes the main window and sets up the UI and connections.
-        clear_input(): Clears the input fields and resets the UI.
-        get_formats(): Retrieves the available formats for the provided URL.
-        populate_combo_box(formats): Populates the combo box with format options.
-        start_download(): Starts the download process for the selected format.
-        progress_hook(d): Handles the progress updates during download.
-        update_progress(): Updates the progress bar and labels with download status.
-        update_table(): Updates the table with download details.
-        comboChanged(): Handles changes in the combo box selection.
-        on_download_finished(): Handles the completion of the download process.
-        on_download_error(error): Handles errors during the download process.
-        select_download_folder(): Allows the user to select a download folder.
-        open_download_folder(): Opens the selected download folder.
+        __init__(self): Initializes the main window.
+        clear_input(self): Clears the input fields and reset labels.
+        get_formats(self): Retrieves available formats for the provided URL.
+        populate_combo_box(self, formats): Populates the combo box with available formats.
+        start_download(self): Starts the download process.
+        progress_hook(self, d): Handles download progress updates.
+        update_progress(self): Updates the progress bar and labels with the download status.
+        update_table(self): Updates the table with download details.
+        comboChanged(self): Handles changes in the combo box selection.
+        on_download_finished(self): Handles the completion of the download process.
+        on_download_error(self, error): Handles errors during the download process.
+        select_download_folder(self): Allows the user to select a download folder.
+        open_download_folder(self): Opens the selected download folder in the file explorer.
     """
 
     def __init__(self):
         """
-        Initialize the main window, set up the UI, and connect signals.
+        Initializes the main window.
         """
         super(MainWindow, self).__init__()
         self.selectionType = None
@@ -202,7 +217,7 @@ class MainWindow(QMainWindow):
 
     def clear_input(self):
         """
-        Clear the input fields and reset the UI elements.
+        Clears the input fields and resets labels.
         """
         self.lineEdit.clear()
         self.comboBox.clear()
@@ -213,7 +228,7 @@ class MainWindow(QMainWindow):
 
     def get_formats(self):
         """
-        Retrieve the available formats for the provided URL and populate the combo box.
+        Retrieves available formats for the provided URL.
         """
         self.url = self.lineEdit.text().strip()
 
@@ -243,10 +258,10 @@ class MainWindow(QMainWindow):
 
     def populate_combo_box(self, formats):
         """
-        Populate the combo box with the available format options.
+        Populates the combo box with available formats.
 
         Args:
-            formats (dict): The dictionary containing audio and video format options.
+            formats (dict): Dictionary containing available audio and video formats.
         """
         self.comboBox.clear()
         self.comboBox.addItem("Select Format")
@@ -263,7 +278,7 @@ class MainWindow(QMainWindow):
 
     def start_download(self):
         """
-        Start the download process for the selected format and URL.
+        Starts the download process.
         """
         url = self.lineEdit.text().strip()
         if not url:
@@ -282,32 +297,42 @@ class MainWindow(QMainWindow):
         ydl_opts = {
             "format": "",  # Default value, will be set based on selection type
             "outtmpl": "%(title)s.%(ext)s",  # Output filename template
-            "progress_hooks": [self.progress_hook],  # Register the progress hook
+            "progress_hooks": [self.progress_hook],  # Add progress hook
         }
 
-        # Update the format option based on selectionType
-        if self.selectionType == "audio":
-            ydl_opts["format"] = "bestaudio/best"
-        elif self.selectionType == "video":
-            selected_format = self.comboBox.currentText().split(":")[0]
-            ydl_opts["format"] = selected_format
-
-        # Define playlist options if download_playlist is True
         if download_playlist:
-            ydl_opts["noplaylist"] = False
-            ydl_opts["yes_playlist"] = True
-            ydl_opts["playlist_items"] = (
-                "1"  # Only fetch the first video in the playlist
+            ydl_opts["noplaylist"] = False  # Include playlists if checkbox is checked
+        else:
+            ydl_opts["noplaylist"] = True  # Exclude playlists otherwise
+
+        # Set format options based on the selected format type
+        if self.selectionType == "audio":
+            ydl_opts["format"] = "bestaudio/best"  # Download the best audio format
+        elif self.selectionType == "video720p":
+            ydl_opts["format"] = (
+                "bestvideo[height<=720]+bestaudio"  # Best video up to 720p with audio
+            )
+        elif self.selectionType == "video1080p":
+            ydl_opts["format"] = (
+                "bestvideo[height=1080]+bestaudio"  # Best video at 1080p with audio
+            )
+        elif self.selectionType == "video1440p":
+            ydl_opts["format"] = (
+                "bestvideo[height=1440]+bestaudio"  # Best video at 1440p with audio
+            )
+        elif self.selectionType == "video2K":
+            ydl_opts["format"] = (
+                "bestvideo[height=1440]+bestaudio"  # Best video at 2K (1440p) with audio
+            )
+        elif self.selectionType == "video4K":
+            ydl_opts["format"] = (
+                "bestvideo[height=2160]+bestaudio"  # Best video at 4K (2160p) with audio
             )
         else:
-            ydl_opts["noplaylist"] = True
+            QMessageBox.warning(self, "Selection Error", "Invalid selection type.")
+            return
 
-        # Define output directory if download_folder is set
-        if self.download_folder:
-            ydl_opts["outtmpl"] = os.path.join(
-                self.download_folder, "%(title)s.%(ext)s"
-            )
-
+        # Start the download operation in a separate thread
         self.download_thread = DownloadWorker(url, ydl_opts)
         self.download_thread.progress.connect(self.progress_hook)
         self.download_thread.finished.connect(self.on_download_finished)
@@ -316,109 +341,178 @@ class MainWindow(QMainWindow):
 
     def progress_hook(self, d):
         """
-        Handle progress updates during the download process.
+        Handles download progress updates.
 
         Args:
-            d (dict): The dictionary containing progress update information.
+            d (dict): Dictionary containing download progress data.
         """
+        self.download_data = d
+
+        if "entries" not in d:
+            self.playlistCheckBox.setChecked(False)
+        else:
+            self.playlistCheckBox.setChecked(True)
+
+        if "filename" in d:
+            filename = d["filename"]  # Get the actual filename from the dictionary
+            cleaned_filename = re.sub(r"%\([^)]+\)s", "", filename).strip()
+            self.fileNameLabel.setText(f"Downloading: {cleaned_filename}")
+
         if d["status"] == "downloading":
-            self.download_data = d
+            self.file_size = d.get("total_bytes", d.get("total_bytes_estimate", 0))
+            self.downloaded_bytes = d.get("downloaded_bytes", 0)
+            self.transfer_rate = d.get("speed", 0)
+            self.eta = d.get("eta", 0)
+            self.status = "Downloading"
+
+        elif d["status"] == "finished":
+            self.file_size = d.get("total_bytes", d.get("total_bytes_estimate", 0))
+            self.downloaded_bytes = self.file_size
+            self.transfer_rate = 0
+            self.eta = 0
+            self.status = "Finished"
 
     def update_progress(self):
         """
-        Update the progress bar and labels with the download status.
+        Updates the progress bar and labels with the download status.
         """
         if self.download_data:
-            self.file_size = self.download_data.get("total_bytes")
-            self.downloaded_bytes = self.download_data.get("downloaded_bytes")
-            self.status = self.download_data.get("status")
-            self.eta = self.download_data.get("eta")
-            self.transfer_rate = self.download_data.get("speed")
+            downloaded_bytes = self.download_data.get("downloaded_bytes", 0)
+            total_bytes = self.download_data.get(
+                "total_bytes", self.download_data.get("total_bytes_estimate", 1)
+            )
+            self.downloadedLabel.setText(f"{downloaded_bytes / (1024 * 1024):.2f} MB")
+            self.fileSizeLabel.setText(f"{total_bytes / (1024 * 1024):.2f} MB")
+            percent = downloaded_bytes / total_bytes * 100 if total_bytes else 0
+            self.progressBar.setValue(min(max(int(percent), 0), 100))
 
-            if self.file_size:
-                progress = (self.downloaded_bytes / self.file_size) * 100
-                self.progressBar.setValue(progress)
-            if self.downloaded_bytes:
-                downloaded_mb = self.downloaded_bytes / (1024 * 1024)
-                self.downloadedLabel.setText(f"{downloaded_mb:.2f} MB")
-            if self.file_size:
-                total_mb = self.file_size / (1024 * 1024)
-                self.fileSizeLabel.setText(f"{total_mb:.2f} MB")
-            if self.status:
-                self.statusLabel.setText(f"Status: {self.status}")
-            if self.eta:
-                eta_str = str(timedelta(seconds=self.eta))
-                self.etaLabel.setText(f"ETA: {eta_str}")
-            if self.transfer_rate:
-                speed_mb = self.transfer_rate / (1024 * 1024)
-                self.speedLabel.setText(f"Speed: {speed_mb:.2f} MB/s")
+            if self.download_data.get("status") != "finished":
+                self.update_table()  # Call the update_table method only if download is not finished
 
     def update_table(self):
         """
-        Update the table with download details from the database.
+        Updates the table with download details.
         """
-        from db_functions import retrieve_all_completed_downloads
+        if self.download_data:
+            downloaded_bytes = self.download_data.get("downloaded_bytes", 0)
+            total_bytes = self.download_data.get(
+                "total_bytes", self.download_data.get("total_bytes_estimate", 1)
+            )
+            percent = downloaded_bytes / total_bytes * 100 if total_bytes else 0
+            transfer_rate = self.download_data.get("speed", 0)
 
-        completed_downloads = retrieve_all_completed_downloads()
-        self.tableWidget.setRowCount(len(completed_downloads))
-        self.tableWidget.setColumnCount(3)
-        for row, download in enumerate(completed_downloads):
-            for col, data in enumerate(download):
-                item = QTableWidgetItem(str(data))
-                item.setTextAlignment(Qt.AlignCenter)
-                self.tableWidget.setItem(row, col, item)
+            # File size in MB
+            file_size_mb = total_bytes / (1024 * 1024)
+            file_size_str = f"{file_size_mb:.2f} MB"
+
+            # Transfer rate in MB/s
+            transfer_rate_mb_s = transfer_rate / (1024 * 1024)
+            transfer_rate_str = f"{transfer_rate_mb_s:.2f} MB/s"
+
+            # Download status
+            if percent < 100:
+                download_status = f"{percent:.2f}%"
+            else:
+                download_status = "Completed"
+
+            # Time left (ETA) in seconds
+            eta_seconds = self.download_data.get("eta", None)
+            if eta_seconds is not None:
+                time_left = str(timedelta(seconds=eta_seconds)).split(".")[
+                    0
+                ]  # Remove milliseconds
+            else:
+                time_left = "N/A"
+
+            # Check if the filename is already in the table
+            filename = self.fileNameLabel.text().replace("Downloading: ", "").strip()
+            row_count = self.tableWidget.rowCount()
+            row_position = -1
+            for row in range(row_count):
+                if self.tableWidget.item(row, 0).text() == filename:
+                    row_position = row
+                    break
+
+            # If not found, add a new row
+            if row_position == -1:
+                row_position = self.tableWidget.rowCount()
+                self.tableWidget.insertRow(row_position)
+
+            # Set or update the row with the new values
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(filename))
+            self.tableWidget.setItem(row_position, 1, QTableWidgetItem(file_size_str))
+            self.tableWidget.setItem(row_position, 2, QTableWidgetItem(download_status))
+            self.tableWidget.setItem(row_position, 3, QTableWidgetItem(time_left))
+            self.tableWidget.setItem(
+                row_position, 4, QTableWidgetItem(transfer_rate_str)
+            )
 
     def comboChanged(self):
         """
-        Handle changes in the combo box selection.
+        Handles changes in the combo box selection.
         """
-        current_text = self.comboBox.currentText()
-        if "audio" in current_text.lower():
-            self.selectionType = "audio"
-        elif "video" in current_text.lower():
-            self.selectionType = "video"
+        selected_text = self.comboBox.currentText()
+        if selected_text:
+            if "Audio Only" in selected_text:
+                self.selectionType = "audio"
+            elif "1440p" in selected_text or "2K" in selected_text:
+                self.selectionType = "video1440p"
+            elif "1080p" in selected_text:
+                self.selectionType = "video1080p"
+            elif "720p" in selected_text:
+                self.selectionType = "video720p"
+            elif "4K" in selected_text:
+                self.selectionType = "video4K"
+            else:
+                self.selectionType = "unknown"
         else:
             self.selectionType = "unknown"
 
     def on_download_finished(self):
         """
-        Handle the completion of the download process.
+        Handles the completion of the download process.
         """
-        QMessageBox.information(self, "Download Finished", "The download is complete.")
-        self.download_thread = None
+        # Ensure table is updated once more for the final status
         self.update_table()
+        QMessageBox.information(self, "Download Finished", "The download is complete!")
 
     def on_download_error(self, error):
         """
-        Handle errors during the download process.
+        Handles errors during the download process.
 
         Args:
             error (str): The error message.
         """
         QMessageBox.critical(self, "Download Error", f"An error occurred: {error}")
-        self.download_thread = None
 
     def select_download_folder(self):
         """
-        Allow the user to select a download folder.
+        Allows the user to select a download folder.
         """
-        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder")
-        if folder:
-            self.download_folder = folder
-            self.downloadFolderLabel.setText(folder)
+        try:
+            savedir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+            if savedir:  # Check if the user did not cancel the dialog
+                os.chdir(savedir)
+                dirpath = os.path.basename(os.getcwd())
+                save_path = dirpath
+                self.label.setText(f"Destination Folder = {save_path}")
+                self.download_folder = savedir
+            else:
+                raise ValueError("No directory selected.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to select a directory: {e}")
 
     def open_download_folder(self):
         """
-        Open the selected download folder in the file explorer.
+        Opens the selected download folder in the file explorer.
         """
         if self.download_folder:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self.download_folder))
-        else:
-            QMessageBox.warning(
-                self,
-                "Folder Error",
-                "Please select a download folder first.",
-            )
+            if sys.platform == "win32":
+                os.startfile(self.download_folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", self.download_folder])
+            else:
+                subprocess.Popen(["xdg-open", self.download_folder])
 
 
 if __name__ == "__main__":
