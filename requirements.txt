@@ -1,0 +1,13 @@
+Brotli==1.1.0
+certifi==2024.7.4
+charset-normalizer==3.3.2
+idna==3.7
+mutagen==1.47.0
+pycryptodomex==3.20.0
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.2
+PyQt5_sip==12.15.0
+requests==2.32.3
+urllib3==2.2.2
+websockets==12.0
+yt-dlp==2024.7.25
