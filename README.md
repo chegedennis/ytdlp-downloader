@@ -78,10 +78,10 @@ A PyQt5 application for downloading videos and audio from YouTube using `yt-dlp`
 
 ## Screenshots
 
-![Main Window](images\gui.png)
+![Main Window](images/gui.png)
 _Description of the main window._
 
-![Download Progress](images\download.png)
+![Download Progress](images/download.png)
 _Description of the download progress._
 
 ## License
