@@ -1,7 +1,8 @@
 """
 main.py
 
-A PyQt5 application for downloading YouTube videos and audio using yt-dlp. This application allows users to select video formats, track download progress, and manage completed downloads.
+A PyQt5 application for downloading YouTube videos and audio using yt-dlp. This application allows users to select
+video formats, track download progress, and manage completed downloads.
 
 Modules:
     os
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import time
 from datetime import timedelta
+import sqlite3
 
 import yt_dlp
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal
@@ -49,7 +51,11 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.uic import loadUi
 
-from db_functions import create_database_or_database_table
+from db_functions import (
+    create_database_or_database_table,
+    app_database,
+    add_file_to_database_table,
+)
 
 
 def create_db_dir():
@@ -57,6 +63,31 @@ def create_db_dir():
     Creates a directory named '.dbs' if it doesn't exist.
     """
     os.makedirs(".dbs", exist_ok=True)
+    create_database_or_database_table("completed_downloads")
+
+
+def fetch_entries_from_database(table_name: str, database=app_database):
+    """
+    Fetch all entries from a specified table in the SQLite database.
+
+    Parameters:
+        table_name (str): The name of the table to fetch entries from.
+        database (str, optional): The path to the SQLite database file. Defaults to the global variable `app_database`.
+
+    Returns:
+        list: A list of tuples, where each tuple represents a row from the specified table.
+
+    Example:
+        entries = fetch_entries_from_database('completed_downloads')
+        for entry in entries:
+            print(entry)
+    """
+    connection = sqlite3.connect(database)
+    cursor = connection.cursor()
+    cursor.execute(f"SELECT * FROM {table_name}")
+    entries = cursor.fetchall()
+    connection.close()
+    return entries
 
 
 class DownloadWorker(QThread):
@@ -94,7 +125,16 @@ class DownloadWorker(QThread):
                 ydl.add_progress_hook(self.progress.emit)
                 info_dict = ydl.extract_info(self.url, download=True)
                 video_title = info_dict.get("title", None)
-                merged_filename = f"{video_title}.mp4"
+
+                # Determine the file extension based on whether the download is audio or video
+                if "requested_formats" in info_dict:
+                    # Video and audio merged
+                    merged_filename = f"{video_title}.mp4"
+                else:
+                    # Audio only
+                    audio_extension = info_dict.get("ext", "m4a")
+                    merged_filename = f"{video_title}.{audio_extension}"
+
                 self.finished.emit(merged_filename)
         except Exception as e:
             self.error.emit(str(e))
@@ -256,6 +296,35 @@ class MainWindow(QMainWindow):
         self.downloadFolderButton = self.findChild(QPushButton, "downloadFolderButton")
         self.downloadFolderButton.clicked.connect(self.select_download_folder)
 
+        # Initialize table with existing entries from the database
+        self.initialize_table_from_database()
+
+    def initialize_table_from_database(self):
+        """
+        Initializes the table widget with existing entries from the database.
+        """
+        table_name = "completed_downloads"
+        entries = fetch_entries_from_database(table_name)
+
+        if entries:
+            # Exclude the 'id' column from the table
+            num_columns = len(entries[0]) - 1  # Exclude 'id' column
+            self.tableWidget.setRowCount(len(entries))
+            self.tableWidget.setColumnCount(num_columns)
+
+            for row_idx, row_data in enumerate(entries):
+                for col_idx, cell_data in enumerate(
+                    row_data[1:]
+                ):  # Skip the first column (id)
+                    self.tableWidget.setItem(
+                        row_idx, col_idx, QTableWidgetItem(str(cell_data))
+                    )
+        else:
+            self.tableWidget.setRowCount(0)  # No entries found
+            self.tableWidget.setColumnCount(
+                5
+            )  # Set column count if needed, e.g., 5 columns
+
     def clear_input(self):
         """
         Clears the input fields and resets the UI elements.
@@ -330,6 +399,7 @@ class MainWindow(QMainWindow):
         """
         Starts the download process for the selected URL and format.
         """
+
         url = self.lineEdit.text().strip()
         if not url:
             QMessageBox.warning(self, "URL Error", "Please enter a valid URL.")
@@ -388,6 +458,7 @@ class MainWindow(QMainWindow):
         self.download_thread.finished.connect(self.on_download_finished)
         self.download_thread.error.connect(self.on_download_error)
         self.download_thread.start()
+        self.downloadButton.setEnabled(False)
 
     def progress_hook(self, d):
         """
@@ -527,41 +598,81 @@ class MainWindow(QMainWindow):
         else:
             self.selectionType = "unknown"
 
-    def on_download_finished(self, merged_filename):
+    def on_download_finished(self, merged_filename=None):
         """
         Handles actions when a download is finished.
 
         Args:
-            merged_filename (str): The final merged filename after download.
+            merged_filename (str): The final merged filename after download (optional).
         """
-        if os.path.exists(merged_filename):
-            file_size_bytes = os.path.getsize(merged_filename)
-            file_size_mb = file_size_bytes / (1024 * 1024)  # Convert bytes to MB
-            file_size_gb = file_size_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
-
-            # Determine the appropriate unit (MB or GB)
-            if file_size_gb >= 1:
-                file_size_str = f"{file_size_gb:.2f} GB"
+        self.downloadButton.setEnabled(True)
+        try:
+            # Determine the correct filename for audio files
+            if merged_filename is None:
+                filename = (
+                    self.fileNameLabel.text().replace("Downloading: ", "").strip()
+                )
             else:
-                file_size_str = f"{file_size_mb:.2f} MB"
+                filename = merged_filename
 
-            self.fileSizeLabel.setText(file_size_str)
+            if os.path.exists(filename):
+                file_size_bytes = os.path.getsize(filename)
+                file_size_mb = file_size_bytes / (1024 * 1024)  # Convert bytes to MB
+                file_size_gb = file_size_bytes / (
+                    1024 * 1024 * 1024
+                )  # Convert bytes to GB
 
-            # Use the current row position to update the row
-            row_position = self.current_row_position
-            if row_position is not None:
-                self.tableWidget.setItem(
-                    row_position, 0, QTableWidgetItem(merged_filename)
+                # Determine the appropriate unit (MB or GB)
+                file_size_str = (
+                    f"{file_size_gb:.2f} GB"
+                    if file_size_gb >= 1
+                    else f"{file_size_mb:.2f} MB"
                 )
-                self.tableWidget.setItem(
-                    row_position, 1, QTableWidgetItem(file_size_str)
-                )
-                self.tableWidget.setItem(row_position, 2, QTableWidgetItem("Completed"))
-                self.tableWidget.setItem(row_position, 3, QTableWidgetItem("N/A"))
-                self.tableWidget.setItem(row_position, 4, QTableWidgetItem("0.00 MB/S"))
 
-        QMessageBox.information(self, "Download Finished", "The download is complete!")
-        self.clear_input()
+                # Use the current row position to update the row
+                row_position = self.current_row_position
+                if row_position is not None:
+                    self.tableWidget.setItem(
+                        row_position, 0, QTableWidgetItem(filename)
+                    )
+                    self.tableWidget.setItem(
+                        row_position, 1, QTableWidgetItem(file_size_str)
+                    )
+                    self.tableWidget.setItem(
+                        row_position, 2, QTableWidgetItem("Completed")
+                    )
+                    self.tableWidget.setItem(row_position, 3, QTableWidgetItem("N/A"))
+                    self.tableWidget.setItem(
+                        row_position, 4, QTableWidgetItem("0.00 MB/S")
+                    )
+
+                # Add the completed download to the database
+                download_status = "Completed"
+                time_left = "N/A"  # Time left is not available after download
+                transfer_rate = (
+                    "0.00 MB/S"  # Transfer rate is not available after download
+                )
+                add_file_to_database_table(
+                    filename,
+                    file_size_str,
+                    download_status,
+                    time_left,
+                    transfer_rate,
+                    "completed_downloads",
+                )
+
+            QMessageBox.information(
+                self, "Download Finished", "The download is complete!"
+            )
+            self.clear_input()
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Download Error",
+                f"An error occurred while saving to the database: {e}",
+            )
+            print(f"Error: {e}")
 
     def on_download_error(self, error):
         """
@@ -570,6 +681,7 @@ class MainWindow(QMainWindow):
         Args:
             error (str): The error message.
         """
+        self.downloadButton.setEnabled(True)
         QMessageBox.critical(self, "Download Error", f"An error occurred: {error}")
 
     def select_download_folder(self):
