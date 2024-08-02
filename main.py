@@ -11,22 +11,32 @@ Modules:
     subprocess
     yt_dlp
     datetime.timedelta
-    PyQt5.QtCore (QTimer, QThread, pyqtSignal, QObject, QUrl, Qt)
+    PyQt5.QtCore (QTimer, QThread, pyqtSignal, QObject, Qt)
     PyQt5.QtWidgets (QApplication, QMainWindow, QMessageBox, QCheckBox, QLabel, QPushButton, QFileDialog, QTableWidgetItem)
     PyQt5.uic (loadUi)
     db_functions (create_database_or_database_table)
 
 Classes:
-    DownloadWorker
-    MainWindow
+    DownloadWorker: A QThread subclass that handles video/audio downloading using yt-dlp.
+    MainWindow: A QMainWindow subclass that defines the main window and user interface for the application.
 
 Functions:
-    create_db_dir
-    parse_formats
+    create_db_dir(): Creates a directory named '.dbs' if it doesn't exist.
+    normalize_filename(filename): Normalizes filenames by removing unwanted characters and patterns.
+    parse_formats(output): Parses the format output from yt-dlp to categorize audio and video formats.
+    format_bytes(size): Converts bytes to a human-readable string with appropriate units.
 """
 
 import os
-from PyQt5.QtCore import QTimer, QThread, pyqtSignal, QObject, QUrl
+import re
+import subprocess
+import sys
+import time
+from datetime import timedelta
+
+import yt_dlp
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -37,41 +47,30 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QTableWidgetItem,
 )
-import sys
-import time
-import yt_dlp
-import subprocess
-import re
-from PyQt5.QtCore import Qt
 from PyQt5.uic import loadUi
-from datetime import timedelta
 
 from db_functions import create_database_or_database_table
 
 
 def create_db_dir():
     """
-    Create a directory for storing database files if it doesn't exist.
+    Creates a directory named '.dbs' if it doesn't exist.
     """
     os.makedirs(".dbs", exist_ok=True)
 
 
 class DownloadWorker(QThread):
     """
-    Worker thread to handle video/audio downloads using yt-dlp.
+    A worker thread for downloading videos using yt-dlp.
 
     Attributes:
-        progress (pyqtSignal): Signal emitted to indicate download progress.
-        finished (pyqtSignal): Signal emitted when the download is finished.
-        error (pyqtSignal): Signal emitted when an error occurs during download.
-
-    Methods:
-        __init__(self, url, ydl_opts): Initializes the DownloadWorker with a URL and yt-dlp options.
-        run(self): Executes the download process.
+        progress: Signal emitted with download progress information.
+        finished: Signal emitted when the download is finished.
+        error: Signal emitted if an error occurs during download.
     """
 
     progress = pyqtSignal(dict)
-    finished = pyqtSignal()
+    finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, url, ydl_opts):
@@ -79,8 +78,8 @@ class DownloadWorker(QThread):
         Initializes the DownloadWorker with a URL and yt-dlp options.
 
         Args:
-            url (str): The URL of the video/audio to download.
-            ydl_opts (dict): The options for yt-dlp.
+            url (str): The URL of the video to download.
+            ydl_opts (dict): Options for yt-dlp.
         """
         super().__init__()
         self.url = url
@@ -93,27 +92,45 @@ class DownloadWorker(QThread):
         try:
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
                 ydl.add_progress_hook(self.progress.emit)
-                ydl.download([self.url])
-                self.finished.emit()
+                info_dict = ydl.extract_info(self.url, download=True)
+                video_title = info_dict.get("title", None)
+                merged_filename = f"{video_title}.mp4"
+                self.finished.emit(merged_filename)
         except Exception as e:
             self.error.emit(str(e))
 
 
-def parse_formats(output):
+def normalize_filename(filename):
     """
-    Parses the output of yt-dlp to extract available formats.
+    Normalizes the filename by removing suffixes like .f614 or .f140.
 
     Args:
-        output (str): The output from yt-dlp containing format information.
+        filename (str): The original filename.
 
     Returns:
-        dict: A dictionary with available audio and video formats.
+        str: The normalized filename.
+    """
+    base, _ = os.path.splitext(filename)
+    # Remove suffixes like .f614 or .f140
+    base = base.rsplit(".", 1)[0]
+    return base
+
+
+def parse_formats(output):
+    """
+    Parses the output from yt-dlp to extract available formats.
+
+    Args:
+        output (str): The format output from yt-dlp.
+
+    Returns:
+        dict: A dictionary with audio and video formats.
     """
     lines = output.splitlines()
     formats = {"audio": None, "video": []}
 
-    def resolution_to_label(resolution):
-        width, height = map(int, resolution.split("x"))
+    def resolution_to_label(res):
+        width, height = map(int, res.split("x"))
         if height >= 2160:
             return "4K"
         elif height >= 1440:
@@ -131,8 +148,10 @@ def parse_formats(output):
         video_match = re.match(r"^(\d+)\s+\w+\s+(\d+x\d+)", line)
         if video_match:
             format_code = video_match.group(1)
-            resolution = video_match.group(2)
-            label = resolution_to_label(resolution)
+            video_resolution = video_match.group(
+                2
+            )  # Changed variable name from 'resolution'
+            label = resolution_to_label(video_resolution)
             formats["video"].append(f"{format_code}: {label}")
 
         audio_match = re.match(r"^(\d+)\s+\w+\s+audio only", line)
@@ -141,6 +160,26 @@ def parse_formats(output):
             formats["audio"] = f"{format_code}: Audio Only"
 
     return formats
+
+
+def format_bytes(size):
+    """
+    Converts a byte size into a human-readable string with appropriate units.
+
+    Args:
+        size (int): The size in bytes.
+
+    Returns:
+        str: The size formatted as a human-readable string.
+    """
+    # 2**10 = 1024
+    power = 2**10
+    n = 0
+    power_labels = {0: "", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
+    while size > power:
+        size /= power
+        n += 1
+    return f"{size:.2f} {power_labels[n]}"
 
 
 class MainWindow(QMainWindow):
@@ -177,7 +216,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         """
-        Initializes the main window.
+        Initializes the main window and sets up the UI and connections.
         """
         super(MainWindow, self).__init__()
         self.selectionType = None
@@ -187,6 +226,7 @@ class MainWindow(QMainWindow):
         self.downloaded_bytes = None
         self.file_size = None
         self.url = None
+        self.current_row_position = None  # Track the current row being updated
         loadUi("tube.ui", self)
 
         create_db_dir()
@@ -203,7 +243,7 @@ class MainWindow(QMainWindow):
         self.update_timer.start()
 
         self.pushButton.clicked.connect(self.get_formats)
-        self.comboBox.currentIndexChanged.connect(self.comboChanged)
+        self.comboBox.currentIndexChanged.connect(self.combo_changed)
         self.downloadButton.clicked.connect(self.start_download)
         self.clearButton.clicked.connect(self.clear_input)
         self.playlistCheckBox = self.findChild(QCheckBox, "playlistCheckBox")
@@ -211,24 +251,34 @@ class MainWindow(QMainWindow):
         self.download_thread = None
         self.download_folder = None
 
+        self.fileSizeLabel = self.findChild(QLabel, "fileSizeLabel")
         self.fileNameLabel = self.findChild(QLabel, "fileNameLabel")
         self.downloadFolderButton = self.findChild(QPushButton, "downloadFolderButton")
         self.downloadFolderButton.clicked.connect(self.select_download_folder)
 
     def clear_input(self):
         """
-        Clears the input fields and resets labels.
+        Clears the input fields and resets the UI elements.
         """
         self.lineEdit.clear()
         self.comboBox.clear()
         self.progressBar.setValue(0)
-        self.downloadedLabel.setText("Downloaded")
-        self.fileSizeLabel.setText("File Size")
-        self.fileNameLabel.setText("File Name")
+        self.downloadedLabel.setText("Downloaded: 0 MB")
+        self.fileSizeLabel.setText("File Size: 0 MB")
+        self.fileNameLabel.setText("File Name: None")
+
+        # Stop the update timer to prevent immediate UI updates with old values
+        self.update_timer.stop()
+
+        # Clear download data
+        self.download_data = {}
+
+        # Restart the timer if needed (optional, depending on your application's logic)
+        self.update_timer.start()
 
     def get_formats(self):
         """
-        Retrieves available formats for the provided URL.
+        Retrieves available formats for the entered URL using yt-dlp.
         """
         self.url = self.lineEdit.text().strip()
 
@@ -258,10 +308,10 @@ class MainWindow(QMainWindow):
 
     def populate_combo_box(self, formats):
         """
-        Populates the combo box with available formats.
+        Populates the format selection combobox with available formats.
 
         Args:
-            formats (dict): Dictionary containing available audio and video formats.
+            formats (dict): A dictionary of available formats.
         """
         self.comboBox.clear()
         self.comboBox.addItem("Select Format")
@@ -278,7 +328,7 @@ class MainWindow(QMainWindow):
 
     def start_download(self):
         """
-        Starts the download process.
+        Starts the download process for the selected URL and format.
         """
         url = self.lineEdit.text().strip()
         if not url:
@@ -341,23 +391,17 @@ class MainWindow(QMainWindow):
 
     def progress_hook(self, d):
         """
-        Handles download progress updates.
+        Updates the progress bar and other UI elements based on download progress.
 
         Args:
-            d (dict): Dictionary containing download progress data.
+            d (dict): Progress information from yt-dlp.
         """
         self.download_data = d
 
-        if "entries" not in d:
-            self.playlistCheckBox.setChecked(False)
-        else:
-            self.playlistCheckBox.setChecked(True)
-
         if "filename" in d:
             filename = d["filename"]  # Get the actual filename from the dictionary
-            cleaned_filename = re.sub(r"%\([^)]+\)s", "", filename).strip()
+            cleaned_filename = normalize_filename(filename)
             self.fileNameLabel.setText(f"Downloading: {cleaned_filename}")
-
         if d["status"] == "downloading":
             self.file_size = d.get("total_bytes", d.get("total_bytes_estimate", 0))
             self.downloaded_bytes = d.get("downloaded_bytes", 0)
@@ -374,20 +418,25 @@ class MainWindow(QMainWindow):
 
     def update_progress(self):
         """
-        Updates the progress bar and labels with the download status.
+        Periodically updates the UI elements with download information.
         """
-        if self.download_data:
-            downloaded_bytes = self.download_data.get("downloaded_bytes", 0)
-            total_bytes = self.download_data.get(
-                "total_bytes", self.download_data.get("total_bytes_estimate", 1)
-            )
-            self.downloadedLabel.setText(f"{downloaded_bytes / (1024 * 1024):.2f} MB")
-            self.fileSizeLabel.setText(f"{total_bytes / (1024 * 1024):.2f} MB")
-            percent = downloaded_bytes / total_bytes * 100 if total_bytes else 0
-            self.progressBar.setValue(min(max(int(percent), 0), 100))
+        if not self.download_data:
+            # No active download, reset the progress bar and labels
+            self.progressBar.setValue(0)
+            self.downloadedLabel.setText("Downloaded: 0 MB")
+            self.fileSizeLabel.setText("File Size: 0 MB")
+            return
+        downloaded_bytes = self.download_data.get("downloaded_bytes", 0)
+        total_bytes = self.download_data.get(
+            "total_bytes", self.download_data.get("total_bytes_estimate", 1)
+        )
+        self.downloadedLabel.setText(f"{downloaded_bytes / (1024 * 1024):.2f} MB")
+        self.fileSizeLabel.setText(f"{total_bytes / (1024 * 1024):.2f} MB")
+        percent = downloaded_bytes / total_bytes * 100 if total_bytes else 0
+        self.progressBar.setValue(min(max(int(percent), 0), 100))
 
-            if self.download_data.get("status") != "finished":
-                self.update_table()  # Call the update_table method only if download is not finished
+        if self.download_data.get("status") != "finished":
+            self.update_table()  # Call the update_table method only if download is not finished
 
     def update_table(self):
         """
@@ -417,26 +466,36 @@ class MainWindow(QMainWindow):
 
             # Time left (ETA) in seconds
             eta_seconds = self.download_data.get("eta", None)
-            if eta_seconds is not None:
+            if isinstance(eta_seconds, (int, float)) and eta_seconds is not None:
                 time_left = str(timedelta(seconds=eta_seconds)).split(".")[
                     0
                 ]  # Remove milliseconds
             else:
                 time_left = "N/A"
 
-            # Check if the filename is already in the table
+            # Extract and normalize the base name of the file
             filename = self.fileNameLabel.text().replace("Downloading: ", "").strip()
+            base_filename = normalize_filename(filename)
+
             row_count = self.tableWidget.rowCount()
             row_position = -1
             for row in range(row_count):
-                if self.tableWidget.item(row, 0).text() == filename:
-                    row_position = row
-                    break
+                item = self.tableWidget.item(row, 0)
+                if item is not None:
+                    item_text = item.text()
+                    item_base_filename = normalize_filename(item_text)
+
+                    if item_base_filename == base_filename:
+                        row_position = row
+                        break
 
             # If not found, add a new row
             if row_position == -1:
                 row_position = self.tableWidget.rowCount()
                 self.tableWidget.insertRow(row_position)
+                self.current_row_position = (
+                    row_position  # Store the current row position
+                )
 
             # Set or update the row with the new values
             self.tableWidget.setItem(row_position, 0, QTableWidgetItem(filename))
@@ -447,7 +506,7 @@ class MainWindow(QMainWindow):
                 row_position, 4, QTableWidgetItem(transfer_rate_str)
             )
 
-    def comboChanged(self):
+    def combo_changed(self):
         """
         Handles changes in the combo box selection.
         """
@@ -468,17 +527,45 @@ class MainWindow(QMainWindow):
         else:
             self.selectionType = "unknown"
 
-    def on_download_finished(self):
+    def on_download_finished(self, merged_filename):
         """
-        Handles the completion of the download process.
+        Handles actions when a download is finished.
+
+        Args:
+            merged_filename (str): The final merged filename after download.
         """
-        # Ensure table is updated once more for the final status
-        self.update_table()
+        if os.path.exists(merged_filename):
+            file_size_bytes = os.path.getsize(merged_filename)
+            file_size_mb = file_size_bytes / (1024 * 1024)  # Convert bytes to MB
+            file_size_gb = file_size_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
+
+            # Determine the appropriate unit (MB or GB)
+            if file_size_gb >= 1:
+                file_size_str = f"{file_size_gb:.2f} GB"
+            else:
+                file_size_str = f"{file_size_mb:.2f} MB"
+
+            self.fileSizeLabel.setText(file_size_str)
+
+            # Use the current row position to update the row
+            row_position = self.current_row_position
+            if row_position is not None:
+                self.tableWidget.setItem(
+                    row_position, 0, QTableWidgetItem(merged_filename)
+                )
+                self.tableWidget.setItem(
+                    row_position, 1, QTableWidgetItem(file_size_str)
+                )
+                self.tableWidget.setItem(row_position, 2, QTableWidgetItem("Completed"))
+                self.tableWidget.setItem(row_position, 3, QTableWidgetItem("N/A"))
+                self.tableWidget.setItem(row_position, 4, QTableWidgetItem("0.00 MB/S"))
+
         QMessageBox.information(self, "Download Finished", "The download is complete!")
+        self.clear_input()
 
     def on_download_error(self, error):
         """
-        Handles errors during the download process.
+        Handles errors that occur during download.
 
         Args:
             error (str): The error message.
@@ -487,7 +574,7 @@ class MainWindow(QMainWindow):
 
     def select_download_folder(self):
         """
-        Allows the user to select a download folder.
+        Opens a file dialog to select the download folder.
         """
         try:
             savedir = QFileDialog.getExistingDirectory(self, "Select Download Folder")
