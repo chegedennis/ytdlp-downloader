@@ -4,18 +4,9 @@ main.py
 A PyQt5 application for downloading YouTube videos and audio using yt-dlp. This application allows users to select
 video formats, track download progress, and manage completed downloads.
 
-Modules:
-    os
-    sys
-    time
-    re
-    subprocess
-    yt_dlp
-    datetime.timedelta
-    PyQt5.QtCore (QTimer, QThread, pyqtSignal, QObject, Qt)
-    PyQt5.QtWidgets (QApplication, QMainWindow, QMessageBox, QCheckBox, QLabel, QPushButton, QFileDialog, QTableWidgetItem)
-    PyQt5.uic (loadUi)
-    db_functions (create_database_or_database_table)
+Modules: os sys time re subprocess yt_dlp datetime.timedelta PyQt5.QtCore (QTimer, QThread, pyqtSignal, QObject,
+Qt) PyQt5.QtWidgets (QApplication, QMainWindow, QMessageBox, QCheckBox, QLabel, QPushButton, QFileDialog,
+QTableWidgetItem) PyQt5.uic (loadUi) db_functions (create_database_or_database_table)
 
 Classes:
     DownloadWorker: A QThread subclass that handles video/audio downloading using yt-dlp.
@@ -34,11 +25,11 @@ import subprocess
 import sys
 import time
 from datetime import timedelta
-import sqlite3
 
 import yt_dlp
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -48,13 +39,15 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QTableWidgetItem,
+    QMenu,
 )
 from PyQt5.uic import loadUi
 
 from db_functions import (
     create_database_or_database_table,
-    app_database,
     add_file_to_database_table,
+    fetch_entries_from_database,
+    delete_files_from_database,
 )
 
 
@@ -63,31 +56,6 @@ def create_db_dir():
     Creates a directory named '.dbs' if it doesn't exist.
     """
     os.makedirs(".dbs", exist_ok=True)
-    create_database_or_database_table("completed_downloads")
-
-
-def fetch_entries_from_database(table_name: str, database=app_database):
-    """
-    Fetch all entries from a specified table in the SQLite database.
-
-    Parameters:
-        table_name (str): The name of the table to fetch entries from.
-        database (str, optional): The path to the SQLite database file. Defaults to the global variable `app_database`.
-
-    Returns:
-        list: A list of tuples, where each tuple represents a row from the specified table.
-
-    Example:
-        entries = fetch_entries_from_database('completed_downloads')
-        for entry in entries:
-            print(entry)
-    """
-    connection = sqlite3.connect(database)
-    cursor = connection.cursor()
-    cursor.execute(f"SELECT * FROM {table_name}")
-    entries = cursor.fetchall()
-    connection.close()
-    return entries
 
 
 class DownloadWorker(QThread):
@@ -259,6 +227,7 @@ class MainWindow(QMainWindow):
         Initializes the main window and sets up the UI and connections.
         """
         super(MainWindow, self).__init__()
+        self.table = "completed_downloads"
         self.selectionType = None
         self.status = None
         self.eta = None
@@ -270,7 +239,7 @@ class MainWindow(QMainWindow):
         loadUi("tube.ui", self)
 
         create_db_dir()
-        create_database_or_database_table("completed_downloads")
+        create_database_or_database_table(self.table)
 
         self.last_update_time = time.time()
         self.update_interval = 0.5
@@ -299,11 +268,14 @@ class MainWindow(QMainWindow):
         # Initialize table with existing entries from the database
         self.initialize_table_from_database()
 
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+
     def initialize_table_from_database(self):
         """
         Initializes the table widget with existing entries from the database.
         """
-        table_name = "completed_downloads"
+        table_name = self.table
         entries = fetch_entries_from_database(table_name)
 
         if entries:
@@ -344,6 +316,54 @@ class MainWindow(QMainWindow):
 
         # Restart the timer if needed (optional, depending on your application's logic)
         self.update_timer.start()
+
+    def get_highlighted_filenames(self):
+        """
+        Returns a list of filenames corresponding to highlighted rows in the tableWidget.
+
+        Returns:
+            list: List of highlighted filenames.
+        """
+        highlighted_filenames = []
+        selected_rows = self.tableWidget.selectionModel().selectedRows()
+        for row in selected_rows:
+            filename = self.tableWidget.item(row.row(), 0).text()
+            highlighted_filenames.append(filename)
+        return highlighted_filenames
+
+    def show_context_menu(self):
+        """
+        Displays a context menu with an option to delete selected files.
+
+        The context menu appears at the cursor's current position and provides a
+        "Delete" option. When the "Delete" option is selected, it triggers the
+        `delete_selected_files` method to delete the selected files from the
+        table widget and the database.
+        """
+        menu = QMenu()
+        delete_action = menu.addAction("Delete")
+        delete_action.triggered.connect(self.delete_selected_files)
+
+        menu.exec_(QCursor.pos())
+
+    def delete_selected_files(self):
+        """
+        Deletes the selected files from the table widget and the database.
+
+        This method retrieves the filenames of the selected rows in the table widget,
+        deletes them from the database, and removes the corresponding rows from the
+        table widget. If no rows are selected, the method does nothing.
+        """
+        selected_rows = self.tableWidget.selectionModel().selectedRows()
+
+        if not selected_rows:
+            return
+
+        filenames_to_delete = self.get_highlighted_filenames()
+        delete_files_from_database(filenames_to_delete, self.table)
+
+        for row in sorted(selected_rows, reverse=True):
+            self.tableWidget.removeRow(row.row())
 
     def get_formats(self):
         """

@@ -45,6 +45,30 @@ def create_database_or_database_table(table_name: str) -> None:
     connection.close()
 
 
+def fetch_entries_from_database(table_name: str, database=app_database):
+    """
+    Fetch all entries from a specified table in the SQLite database.
+
+    Parameters:
+        table_name (str): The name of the table to fetch entries from.
+        database (str, optional): The path to the SQLite database file. Defaults to the global variable `app_database`.
+
+    Returns:
+        list: A list of tuples, where each tuple represents a row from the specified table.
+
+    Example:
+        entries = fetch_entries_from_database('completed_downloads')
+        for entry in entries:
+            print(entry)
+    """
+    connection = sqlite3.connect(database)
+    cursor = connection.cursor()
+    cursor.execute(f"SELECT * FROM {table_name}")
+    entries = cursor.fetchall()
+    connection.close()
+    return entries
+
+
 def add_file_to_database_table(
     filename: str,
     size: str,
@@ -80,25 +104,26 @@ def add_file_to_database_table(
     connection.close()
 
 
-def delete_file_from_database(
-    filename: str, table: str, database: str = app_database
+def delete_files_from_database(
+    filenames: list, table: str, database: str = app_database
 ) -> None:
     """
-    Deletes a file record from the specified database table based on the filename.
+    Deletes file records from the specified database table based on the list of filenames.
 
     Args:
-        filename (str): The name of the file to delete.
-        table (str): The name of the table to delete the record from.
+        filenames (list): List of filenames to delete.
+        table (str): The name of the table to delete the records from.
         database (str, optional): The path to the database. Defaults to app_database.
     """
     connection = sqlite3.connect(database)
     cursor = connection.cursor()
-    cursor.execute(
-        f"""
-    DELETE FROM {table} 
-    WHERE filename = ?
-    """,
-        (filename,),
-    )
+    for filename in filenames:
+        cursor.execute(
+            f"""
+        DELETE FROM {table} 
+        WHERE filename = ?
+        """,
+            (filename,),
+        )
     connection.commit()
     connection.close()
