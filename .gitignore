@@ -1,3 +1,135 @@
+# Compiled Python files
+# Byte-compiled / optimized / DLL files
+# C extensions
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packages
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+.env
+.env.*
+*.env
+
+# Test / coverage
+.pytest_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+
+# Type checkers
+.mypy_cache/
+/.pytype/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-*
+__MACOSX/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs, databases
+*.log
+*.sqlite3
+*.db
+
+# Distribution artifacts
+*.egg
+*.whl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Wheels
+*.whl
+
+# Backup files
+*~
+*.swp
+
+# Secret or credentials files
+.credentials
+credentials.json
+secrets.yml
+
+# Local settings
+local_settings.py
+
+# Optional: ignore downloaded media and output directories
+# Uncomment if your downloads/output live in these folders
+# downloads/
+# output/
+# *.mp4
+# *.mkv
+# *.webm
+# *.flv
+# *.mp3
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+.env
+
+# Testing
+.pytest_cache/
+
+# Mypy
+.mypy_cache/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python history and logs
+.python_history
+*.log
+*.sqlite3
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
