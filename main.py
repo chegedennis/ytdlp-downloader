@@ -1,18 +1,20 @@
 """
-main.py - FIXED THUMBNAIL VERSION
+main.py - FINAL DESKTOP VERSION
+(Fixed Thumbnails + Cover Art + Cookies + Auto-Skip + Improved Audio Logic)
 
 A Modern PyQt5 YouTube Downloader.
 Features:
 - "Cover Art" Mode: Saves a permanent JPG cover art file next to the MP3.
-- Embeds metadata and thumbnails into the audio file for file manager display.
+- Cookies Support: Authenticate for age-restricted/premium content.
+- Embeds metadata and thumbnails into the audio file.
 - Responsive UI, Dark Theme, and Auto-Clipboard.
 
 FIXES:
 - Proper thumbnail handling per video (not shared across playlist)
 - Correct filename matching for cover art
-- Better error handling for thumbnail operations
-- ID3v2.3 tags for maximum compatibility with Windows/macOS/Linux file managers
+- ID3v2.3 tags for maximum compatibility
 - High-quality audio encoding (320kbps MP3)
+- Optimized format selection for best quality
 """
 
 import os
@@ -65,29 +67,45 @@ from db_functions import (
 
 
 def check_ffmpeg():
+    """Check if FFmpeg is available in system PATH"""
     return shutil.which("ffmpeg") is not None
 
 
 def format_bytes(size):
+    """Format bytes to human-readable string"""
+    if size == 0:
+        return "0 B"
     power = 2**10
     n = 0
-    power_labels = {0: "", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
-    while size > power:
+    power_labels = {0: "B", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
+    while size > power and n < 4:
         size /= power
         n += 1
     return f"{size:.2f} {power_labels[n]}"
+
+
+def sanitize_filename(filename):
+    """Remove or replace invalid filename characters"""
+    # Remove invalid characters for Windows/Linux/macOS
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        filename = filename.replace(char, "_")
+    return filename.strip()
 
 
 # --- Workers ---
 
 
 class FormatWorker(QThread):
+    """Worker thread to fetch video formats without blocking UI"""
+
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
 
-    def __init__(self, url):
+    def __init__(self, url, cookies_path=None):
         super().__init__()
         self.url = url
+        self.cookies_path = cookies_path
 
     def run(self):
         ydl_opts = {
@@ -97,6 +115,11 @@ class FormatWorker(QThread):
             "noplaylist": False,
             "extract_flat": False,
         }
+
+        # Inject cookies for fetching info (needed for age-gated/premium videos)
+        if self.cookies_path:
+            ydl_opts["cookiefile"] = self.cookies_path
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info_dict = ydl.extract_info(self.url, download=False)
@@ -121,16 +144,18 @@ class FormatWorker(QThread):
 
 
 class DownloadWorker(QThread):
+    """Worker thread to handle downloads without blocking UI"""
+
     progress = pyqtSignal(dict)
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
-    # NEW: Signal to pass thumbnail data per video
     video_info = pyqtSignal(str, bytes)  # (video_id, thumbnail_bytes)
 
     def __init__(self, url, ydl_opts):
         super().__init__()
         self.url = url
         self.ydl_opts = ydl_opts
+        self.fetched_thumbnails = set()
 
     def progress_hook(self, d):
         """Custom progress hook that also captures video info"""
@@ -141,19 +166,24 @@ class DownloadWorker(QThread):
             info_dict = d.get("info_dict")
             if info_dict:
                 video_id = info_dict.get("id", "")
-                thumb_url = info_dict.get("thumbnail")
 
-                # Download thumbnail for this specific video
-                if thumb_url and video_id:
-                    try:
-                        response = requests.get(thumb_url, timeout=5)
-                        if response.status_code == 200:
-                            self.video_info.emit(video_id, response.content)
-                    except Exception as e:
-                        print(f"Thumbnail fetch error for {video_id}: {e}")
+                # Check if we already fetched this thumbnail to avoid duplicate requests
+                if video_id and video_id not in self.fetched_thumbnails:
+                    thumb_url = info_dict.get("thumbnail")
+
+                    # Download thumbnail for this specific video
+                    if thumb_url:
+                        try:
+                            response = requests.get(thumb_url, timeout=5)
+                            if response.status_code == 200:
+                                self.video_info.emit(video_id, response.content)
+                                self.fetched_thumbnails.add(video_id)
+                        except Exception as e:
+                            print(f"Thumbnail fetch error for {video_id}: {e}")
 
     def run(self):
         try:
+            self.fetched_thumbnails.clear()
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
                 ydl.add_progress_hook(self.progress_hook)
                 ydl.extract_info(self.url, download=True)
@@ -177,15 +207,14 @@ class MainWindow(QMainWindow):
         self.selectionType = None
         self.download_data = {}
         self.download_folder = os.getcwd()
+        self.cookies_path = None  # Store path to cookies.txt
+
         self.row_cache = {}
         self.processed_files = set()
 
-        # NEW: Store thumbnails per video ID instead of single thumbnail
+        # Store thumbnails per video ID instead of single thumbnail
         self.video_thumbnails = {}  # {video_id: thumbnail_bytes}
         self.preview_thumbnail_data = None  # Just for preview display
-
-        # NEW: Track video IDs to filenames
-        self.video_id_to_filename = {}  # {video_id: final_filename}
 
         # Database Init
         create_db_dir()
@@ -208,10 +237,11 @@ class MainWindow(QMainWindow):
         # Check Dependencies
         if not check_ffmpeg():
             self.statusbar.showMessage(
-                "Warning: FFmpeg not found. Merging & Embedding will fail."
+                "⚠️ Warning: FFmpeg not found. Merging & Embedding will fail."
             )
 
     def init_ui(self):
+        """Initialize the user interface"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -224,6 +254,7 @@ class MainWindow(QMainWindow):
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Paste YouTube Link Here...")
         self.url_input.setMinimumHeight(40)
+        self.url_input.returnPressed.connect(self.get_formats)  # Press Enter to fetch
 
         self.btn_get = QPushButton("Fetch")
         self.btn_get.setCursor(Qt.PointingHandCursor)
@@ -258,11 +289,19 @@ class MainWindow(QMainWindow):
 
         options_row = QHBoxLayout()
         self.chk_playlist = QCheckBox("Download Playlist")
-        self.btn_folder = QPushButton("Change Folder")
+
+        self.btn_folder = QPushButton("📁 Folder")
         self.btn_folder.clicked.connect(self.select_download_folder)
+        self.btn_folder.setToolTip("Select download destination folder")
+
+        # --- Cookies Button ---
+        self.btn_cookies = QPushButton("🍪 Cookies")
+        self.btn_cookies.setToolTip("Load cookies.txt for restricted videos")
+        self.btn_cookies.clicked.connect(self.select_cookies_file)
 
         options_row.addWidget(self.chk_playlist)
         options_row.addWidget(self.btn_folder)
+        options_row.addWidget(self.btn_cookies)
         options_row.addStretch()
 
         controls_layout.addWidget(self.combo_formats)
@@ -274,6 +313,7 @@ class MainWindow(QMainWindow):
             "font-size: 14px; font-weight: bold; background-color: #28a745;"
         )
         self.btn_download.clicked.connect(self.start_download)
+        self.btn_download.setCursor(Qt.PointingHandCursor)
 
         meta_layout.addWidget(self.lbl_thumbnail)
         meta_layout.addLayout(controls_layout, stretch=1)
@@ -293,60 +333,137 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # Read-only
 
         self.statusbar = self.statusBar()
-        self.statusbar.showMessage(f"Save Location: {self.download_folder}")
+        self.statusbar.showMessage(f"📂 Save Location: {self.download_folder}")
 
         main_layout.addLayout(input_layout)
         main_layout.addLayout(meta_layout)
         main_layout.addWidget(self.table)
 
     def apply_styles(self):
+        """Apply dark theme styling to the application"""
         self.setStyleSheet(
             """
             QMainWindow { background-color: #2b2b2b; color: #ffffff; }
             QWidget { font-family: 'Segoe UI', sans-serif; font-size: 10pt; }
-            QLineEdit { padding: 8px; border-radius: 4px; border: 1px solid #555; background: #333; color: white; }
+            QLineEdit { 
+                padding: 8px; 
+                border-radius: 4px; 
+                border: 1px solid #555; 
+                background: #333; 
+                color: white; 
+            }
             QLineEdit:focus { border: 1px solid #0d6efd; }
-            QPushButton { padding: 5px; border-radius: 4px; background-color: #0d6efd; color: white; border: none; }
+            QPushButton { 
+                padding: 5px; 
+                border-radius: 4px; 
+                background-color: #0d6efd; 
+                color: white; 
+                border: none; 
+            }
             QPushButton:hover { background-color: #0b5ed7; }
+            QPushButton:disabled { background-color: #555; color: #888; }
             
-            QComboBox { padding: 5px; border: 1px solid #555; border-radius: 4px; background: #333; color: white; }
+            QComboBox { 
+                padding: 5px; 
+                border: 1px solid #555; 
+                border-radius: 4px; 
+                background: #333; 
+                color: white; 
+            }
             QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background-color: #333; color: white; selection-background-color: #0d6efd; }
+            QComboBox QAbstractItemView { 
+                background-color: #333; 
+                color: white; 
+                selection-background-color: #0d6efd; 
+            }
             
-            QTableWidget { background-color: #222; gridline-color: #333; color: #eee; border: 1px solid #444; }
-            QHeaderView::section { background-color: #333; color: white; padding: 5px; border: 1px solid #444; }
-            QProgressBar { border: 1px solid #444; border-radius: 3px; text-align: center; background: #222; color: white; }
-            QProgressBar::chunk { background-color: #0d6efd; width: 10px; }
+            QTableWidget { 
+                background-color: #222; 
+                gridline-color: #333; 
+                color: #eee; 
+                border: 1px solid #444; 
+            }
+            QHeaderView::section { 
+                background-color: #333; 
+                color: white; 
+                padding: 5px; 
+                border: 1px solid #444; 
+            }
+            QProgressBar { 
+                border: 1px solid #444; 
+                border-radius: 3px; 
+                text-align: center; 
+                background: #222; 
+                color: white; 
+            }
+            QProgressBar::chunk { 
+                background-color: #0d6efd; 
+                width: 10px; 
+            }
             QStatusBar { background: #222; color: #aaa; }
+            QCheckBox { color: white; }
+            QCheckBox::indicator { width: 18px; height: 18px; }
         """
         )
 
     def check_clipboard(self):
-        clipboard_text = QApplication.clipboard().text()
-        if "youtube.com" in clipboard_text or "youtu.be" in clipboard_text:
-            self.url_input.setText(clipboard_text)
+        """Auto-fill URL input if YouTube link is in clipboard"""
+        try:
+            clipboard_text = QApplication.clipboard().text()
+            if clipboard_text and (
+                "youtube.com" in clipboard_text or "youtu.be" in clipboard_text
+            ):
+                self.url_input.setText(clipboard_text.strip())
+        except Exception as e:
+            print(f"Clipboard check failed: {e}")
 
     # --- Logic ---
 
+    def select_cookies_file(self):
+        """Allow user to select cookies.txt file for authentication"""
+        fname, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Cookies File",
+            os.getcwd(),
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if fname:
+            self.cookies_path = fname
+            # Turn button green to show it's active
+            self.btn_cookies.setStyleSheet("background-color: #28a745; color: white;")
+            self.statusbar.showMessage(f"🍪 Cookies loaded: {os.path.basename(fname)}")
+
     def get_formats(self):
+        """Fetch available formats for the given URL"""
         url = self.url_input.text().strip()
         if not url:
+            QMessageBox.warning(self, "Empty URL", "Please enter a YouTube URL.")
             return
 
         self.btn_get.setEnabled(False)
         self.combo_formats.clear()
         self.combo_formats.addItem("Fetching...")
 
-        self.format_worker = FormatWorker(url)
+        # Pass cookies path to worker
+        self.format_worker = FormatWorker(url, self.cookies_path)
         self.format_worker.finished.connect(self.on_formats_fetched)
-        self.format_worker.error.connect(
-            lambda e: self.combo_formats.setItemText(0, "Error")
-        )
+        self.format_worker.error.connect(self.on_formats_error)
         self.format_worker.start()
 
+    def on_formats_error(self, error_msg):
+        """Handle format fetching errors"""
+        self.btn_get.setEnabled(True)
+        self.combo_formats.clear()
+        self.combo_formats.addItem("Error - Try Again")
+        QMessageBox.critical(
+            self, "Fetch Failed", f"Could not fetch formats:\n{error_msg}"
+        )
+
     def on_formats_fetched(self, info):
+        """Process fetched format information"""
         self.btn_get.setEnabled(True)
         self.combo_formats.clear()
 
@@ -364,49 +481,77 @@ class MainWindow(QMainWindow):
             self.preview_thumbnail_data = None
 
         self.combo_formats.addItem("Select Format", None)
-        self.combo_formats.addItem("Audio Only (Best Quality)", "audio")
+        self.combo_formats.addItem("🎵 Audio Only (Best Quality)", "audio")
 
+        # Extract unique video resolutions
         unique_resolutions = set()
         for f in info.get("formats", []):
             if f.get("vcodec") != "none" and f.get("height"):
                 unique_resolutions.add(f["height"])
 
         for res in sorted(list(unique_resolutions), reverse=True):
-            label = "4K" if res >= 2160 else "2K" if res >= 1440 else f"{res}p"
-            self.combo_formats.addItem(f"Video {label} - MP4", res)
+            self.combo_formats.addItem(f"🎬 Video {res}p - MP4", res)
 
     def combo_changed(self):
-        self.selectionType = self.combo_formats.currentData()
+        """Handle format selection changes"""
+        if self.combo_formats.count() > 0:
+            self.selectionType = self.combo_formats.currentData()
+        else:
+            self.selectionType = None
 
     def start_download(self):
+        """Begin the download process"""
         url = self.url_input.text().strip()
-        if not url or not self.selectionType:
-            QMessageBox.warning(self, "Oops", "Please select a format first.")
+        if not url:
+            QMessageBox.warning(self, "Empty URL", "Please enter a YouTube URL.")
+            return
+
+        if not self.selectionType:
+            QMessageBox.warning(
+                self, "No Format Selected", "Please select a format first."
+            )
             return
 
         # Clear old data
         self.video_thumbnails.clear()
-        self.video_id_to_filename.clear()
 
         ydl_opts = {
             "outtmpl": os.path.join(self.download_folder, "%(title)s.%(ext)s"),
             "noplaylist": not self.chk_playlist.isChecked(),
             "writethumbnail": True,
+            "ignoreerrors": True,  # Continue playlist if one video fails
+            "no_warnings": False,
+            "consoletitle": True,
         }
 
+        # Add Cookies if selected
+        if self.cookies_path:
+            ydl_opts["cookiefile"] = self.cookies_path
+
         postprocessors = []
+
+        # IMPROVED AUDIO LOGIC
         if self.selectionType == "audio":
-            ydl_opts["format"] = "bestaudio/best"
+            # Optimized format selection for best audio quality
+            # Priority: Opus (best quality) > M4A (AAC) > Vorbis > any audio
+            ydl_opts["format"] = (
+                "bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio[acodec=vorbis]/"
+                "bestaudio/best"
+            )
             postprocessors.append(
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": "320",  # High quality
+                    "preferredquality": "320",  # Maximum MP3 quality
                 }
             )
         elif isinstance(self.selectionType, int):
+            # Video download with specified resolution
             h = self.selectionType
-            ydl_opts["format"] = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]"
+            ydl_opts["format"] = (
+                f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={h}]+bestaudio/best[height<={h}]"
+            )
             postprocessors.append(
                 {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
             )
@@ -426,7 +571,6 @@ class MainWindow(QMainWindow):
 
         # Force ID3v2.3 for better compatibility with Windows/macOS
         ydl_opts["postprocessor_args"] = {"ffmpeg": ["-id3v2_version", "3"]}
-
         ydl_opts["postprocessors"] = postprocessors
 
         self.btn_download.setEnabled(False)
@@ -443,9 +587,9 @@ class MainWindow(QMainWindow):
         """Store thumbnail data for a specific video"""
         if video_id and thumbnail_bytes:
             self.video_thumbnails[video_id] = thumbnail_bytes
-            print(f"Stored thumbnail for video: {video_id}")
 
     def on_download_error(self, err_msg):
+        """Handle download errors"""
         self.btn_download.setEnabled(True)
         self.btn_download.setText("START DOWNLOAD")
         QMessageBox.critical(self, "Download Failed", f"An error occurred:\n{err_msg}")
@@ -457,7 +601,7 @@ class MainWindow(QMainWindow):
         search_path = os.path.join(self.download_folder, base_name)
 
         # Common extensions after post-processing
-        extensions = [".mp3", ".mp4", ".webm", ".m4a", ".mkv"]
+        extensions = [".mp3", ".mp4", ".webm", ".m4a", ".mkv", ".opus"]
 
         for ext in extensions:
             full_path = search_path + ext
@@ -474,8 +618,8 @@ class MainWindow(QMainWindow):
         base, _ = os.path.splitext(filepath)
         cover_path = base + ".jpg"
 
+        # Don't overwrite existing cover art
         if os.path.exists(cover_path):
-            print(f"Cover art already exists: {cover_path}")
             return
 
         try:
@@ -486,6 +630,7 @@ class MainWindow(QMainWindow):
             print(f"✗ Could not save cover art: {e}")
 
     def update_progress(self):
+        """Update download progress in the table"""
         if not self.download_data:
             return
 
@@ -522,7 +667,7 @@ class MainWindow(QMainWindow):
                 "video_id": video_id,
             }
 
-        # Update
+        # Update progress
         items = self.row_cache[filename]
         row = self.table.row(items["name_item"])
         status = self.download_data.get("status")
@@ -550,7 +695,6 @@ class MainWindow(QMainWindow):
                 )
                 self.processed_files.add(filename)
 
-                # --- IMPROVED COVER ART SAVING ---
                 # Find the actual file (extension may have changed)
                 actual_file = self.find_matching_file(raw_name)
 
@@ -570,12 +714,13 @@ class MainWindow(QMainWindow):
                     self.save_cover_art(actual_file, thumbnail_data)
                 else:
                     if not actual_file:
-                        print(f"Could not find file for: {filename}")
+                        print(f"⚠️ Could not find file for: {filename}")
                     if not thumbnail_data:
-                        print(f"No thumbnail data for: {filename}")
+                        print(f"⚠️ No thumbnail data for: {filename}")
 
             return
 
+        # Update progress during download
         if total > 0:
             percent = int((downloaded / total) * 100)
             pbar.setValue(percent)
@@ -587,12 +732,14 @@ class MainWindow(QMainWindow):
                 items["eta_item"].setText(str(timedelta(seconds=int(eta))))
 
     def on_download_finished(self, msg):
+        """Handle download completion"""
         self.btn_download.setEnabled(True)
         self.btn_download.setText("START DOWNLOAD")
         QMessageBox.information(self, "Success", "Downloads Completed!")
         self.clear_input()
 
     def initialize_table_from_database(self):
+        """Load previous download history from database"""
         entries = fetch_entries_from_database(self.table_name)
         if entries:
             for data in entries:
@@ -607,6 +754,7 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, 4, QTableWidgetItem("-"))
 
     def clear_input(self):
+        """Clear all input fields and reset state"""
         self.url_input.clear()
         self.combo_formats.clear()
         self.lbl_thumbnail.clear()
@@ -616,15 +764,22 @@ class MainWindow(QMainWindow):
         self.video_thumbnails.clear()
 
     def select_download_folder(self):
-        f = QFileDialog.getExistingDirectory(self, "Select Folder")
+        """Allow user to select download destination"""
+        f = QFileDialog.getExistingDirectory(self, "Select Download Folder")
         if f:
             self.download_folder = f
-            self.statusbar.showMessage(f"Save Location: {f}")
+            self.statusbar.showMessage(f"📂 Save Location: {f}")
 
     def show_context_menu(self, pos):
+        """Show right-click context menu on table"""
+        if not self.table.selectedIndexes():
+            return
+
         menu = QMenu()
-        delete_act = menu.addAction("Delete Selected")
-        if menu.exec_(self.table.mapToGlobal(pos)) == delete_act:
+        delete_act = menu.addAction("🗑️ Delete Selected")
+        action = menu.exec_(self.table.mapToGlobal(pos))
+
+        if action == delete_act:
             rows = sorted(
                 set(index.row() for index in self.table.selectedIndexes()), reverse=True
             )
